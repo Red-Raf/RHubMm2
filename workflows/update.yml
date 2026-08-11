@@ -1,0 +1,30 @@
+name: Auto Update Supreme Values
+
+on:
+  schedule:
+    - cron: '0 */2 * * *' # Авто-запуск каждые 2 часа
+  workflow_dispatch: # Кнопка для ручного запуска
+
+jobs:
+  update-values:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Проверка кода
+        uses: actions/checkout@v3
+
+      - name: Настройка Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Запуск авто-парсера
+        run: python scraper.py
+
+      - name: Сохранение обновлений в GitHub
+        run: |
+          git config --global user.name "SupremeBot"
+          git config --global user.email "bot@github.com"
+          git add values.json
+          git commit -m "Auto-update MM2 values" || exit 0
+          git push
+          
