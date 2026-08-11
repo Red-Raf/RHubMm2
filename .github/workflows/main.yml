@@ -1,0 +1,47 @@
+name: Auto Update Supreme Values
+
+on:
+  schedule:
+    # Запуск каждые 6 часов (в 00:00, 06:00, 12:00, 18:00 UTC)
+    - cron: '0 */6 * * *'
+  workflow_dispatch: # Позволяет запускать вручную через вкладку Actions
+
+jobs:
+  update-values:
+    runs-on: ubuntu-latest
+    
+    # Нужно дать права на запись в репозиторий
+    permissions:
+      contents: write
+
+    steps:
+      - name: Проверка репозитория
+        uses: actions/checkout@v3
+
+      - name: Настройка Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Установка библиотек
+        run: |
+          python -m pip install --upgrade pip
+          pip install cloudscraper beautifulsoup4
+
+      - name: Запуск парсера
+        run: python scraper.py
+
+      - name: Сохранение обновлений в GitHub
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Проверяем, изменился ли файл
+          if [[ -n $(git status -s) ]]; then
+            git add values.json
+            git commit -m "Автоматическое обновление цен Supreme Values"
+            git push
+          else
+            echo "Изменений нет, обновление пропущено."
+          fi
+          
