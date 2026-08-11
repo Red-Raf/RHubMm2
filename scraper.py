@@ -1,43 +1,50 @@
-import urllib.request
 import json
-import re
+import cloudscraper
+from bs4 import BeautifulSoup
 
-# Страницы с предметами на Supreme Values
-URLS = [
-    "https://supremevaluelist.com/mm2/godlies.html",
-    "https://supremevaluelist.com/mm2/ancients.html",
-    "https://supremevaluelist.com/mm2/chromas.html",
-    "https://supremevaluelist.com/mm2/vintage.html"
-]
+# Инициализируем парсер с обходом Cloudflare
+scraper = cloudscraper.create_scraper()
 
-headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-}
-
-items = {}
-
-print("Начинаем скачивание цен с Supreme Values...")
-
-for url in URLS:
+def parse_supreme():
+    print("Запрос к Supreme Values...")
+    
+    # Ссылка на страницу (или API, если есть)
+    url = "https://supremevaluelist.com/mm2/godlies"
+    
     try:
-        req = urllib.request.Request(url, headers=headers)
-        html = urllib.request.urlopen(req).read().decode('utf-8', errors='ignore')
-        
-        # Находим пары: Название предмета и его Цену
-        matches = re.findall(r'class="item-name"[^>]*>([^<]+)<.*?class="value-number"[^>]*>([\d,]+)<', html, re.DOTALL)
-        
-        for name, val in matches:
-            clean_name = name.strip()
-            clean_val = int(val.replace(',', ''))
-            items[clean_name] = clean_val
-    except Exception as e:
-        print(f"Ошибка при скачивании {url}: {e}")
+        response = scraper.get(url)
+        if response.status_code != 200:
+            print(f"Ошибка доступа к сайту: {response.status_code}")
+            return
 
-# Если удалось скачать цены, обновляем файл values.json
-if items:
-    with open('values.json', 'w', encoding='utf-8') as f:
-        json.dump(items, f, indent=2, ensure_ascii=False)
-    print(f"Успешно обновлено предметов: {len(items)}")
-else:
-    print("Не удалось загрузить новые цены, оставляем старые.")
-  
+        soup = BeautifulSoup(response.text, 'html.parser')
+        new_values = {}
+
+        # Логика поиска элементов с ценами на странице
+        # (Ищет карточки предметов и извлекает название и цену)
+        for item in soup.find_all('div', class_='item-card'):
+            name_elem = item.find('div', class_='item-name')
+            value_elem = item.find('div', class_='item-value')
+            
+            if name_elem and value_elem:
+                name = name_elem.text.strip()
+                # Преобразуем цену в число
+                val_str = value_elem.text.strip().replace(',', '')
+                try:
+                    val = int(val_str)
+                    new_values[name] = val
+                except ValueError:
+                    continue
+
+        if new_values:
+            # Перезаписываем values.json новым содержимым
+            with open('values.json', 'w', encoding='utf-8') as f:
+                json.dump(new_values, f, indent=4, ensure_ascii=False)
+            print(f"Успешно обновлено предметов: {len(new_values)}")
+            
+    except Exception as e:
+        print(f"Произошла ошибка при парсинге: {e}")
+
+if __name__ == "__main__":
+    parse_supreme()
+    
