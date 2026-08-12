@@ -1,0 +1,337 @@
+-- MM2 Script v5.0 | Rayfield GUI + Nx-Crazy Silent Aim + v3.2.1 функции
+-- ИСПОЛЬЗОВАНЫ ТОЛЬКО ВАШИ ИСХОДНИКИ
+
+local player = game.Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local rootPart = character:WaitForChild("HumanoidRootPart")
+local camera = workspace.CurrentCamera
+local Lighting = game:GetService("Lighting")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+-- ===== ЗАГРУЗКА RAYFIELD =====
+local Rayfield = loadstring(game:HttpGet("https://raw.githubusercontent.com/shlexware/Rayfield/main/source.lua"))()
+
+-- ===== СОЗДАНИЕ ОКНА =====
+local Window = Rayfield:CreateWindow({
+    Name = "MM2 Script v5.0",
+    Icon = 0,
+    ConfigurationSaving = { Enabled = true, FolderName = "MM2Script", FileName = "Config" }
+})
+
+-- ===== ПЕРЕМЕННЫЕ =====
+local settings = {
+    silentAim = false,
+    killAll = false,
+    godMode = false,
+    infiniteAmmo = false,
+    espEnabled = false,
+    showMurderer = true,
+    showSheriff = true,
+    showInnocent = true,
+    showDistance = true,
+    farmEnabled = false,
+    collectCoins = true,
+    collectWeapons = true,
+    fly = false,
+    noclip = false
+}
+
+-- ================================================
+-- ===== 1. ПЕРЕХВАТ РОЛЕЙ (Nx-Crazy) =====
+-- ================================================
+local Roles = { Murderer = nil, Sheriff = nil }
+local WeaponNames = {
+    Knife = { Index = "Murderer", Color = Color3.fromRGB(255, 0, 0) },
+    Gun = { Index = "Sheriff", Color = Color3.fromRGB(0, 0, 255) }
+}
+
+local function getPlayerRole(plr)
+    if not plr.Character then return "Неизвестно", Color3.fromRGB(255, 255, 255) end
+    local backpack = plr:FindFirstChild("Backpack")
+    if backpack then
+        for _, child in ipairs(backpack:GetChildren()) do
+            local role = WeaponNames[child.Name]
+            if role then
+                if role.Index == "Murderer" then Roles.Murderer = plr
+                elseif role.Index == "Sheriff" then Roles.Sheriff = plr end
+                return role.Index, role.Color
+            end
+        end
+    end
+    if plr.Character then
+        for _, child in ipairs(plr.Character:GetChildren()) do
+            if child:IsA("Tool") then
+                local role = WeaponNames[child.Name]
+                if role then
+                    if role.Index == "Murderer" then Roles.Murderer = plr
+                    elseif role.Index == "Sheriff" then Roles.Sheriff = plr end
+                    return role.Index, role.Color
+                end
+            end
+        end
+    end
+    return "Невинный", Color3.fromRGB(0, 255, 0)
+end
+
+-- ================================================
+-- ===== 2. ESP (Nx-Crazy + v3.2.1) =====
+-- ================================================
+local espInstances = {}
+
+local function createESPBox(part, color, text)
+    if not part then return end
+    for _, child in ipairs(part:GetChildren()) do
+        if child:IsA("BoxHandleAdornment") or child:IsA("BillboardGui") then child:Destroy() end
+    end
+    local box = Instance.new("BoxHandleAdornment")
+    box.Size = part.Size + Vector3.new(0.1, 0.1, 0.1)
+    box.Name = "ESP_Box"
+    box.Visible = settings.espEnabled
+    box.Adornee = part
+    box.Color3 = color
+    box.AlwaysOnTop = true
+    box.ZIndex = 5
+    box.Transparency = 0.4
+    box.Parent = part
+    table.insert(espInstances, box)
+    if text then
+        local billboard = Instance.new("BillboardGui")
+        billboard.Size = UDim2.new(0, 120, 0, 30)
+        billboard.Adornee = part
+        billboard.Parent = part
+        billboard.AlwaysOnTop = true
+        local label = Instance.new("TextLabel", billboard)
+        label.Size = UDim2.new(1, 0, 1, 0)
+        label.BackgroundTransparency = 1
+        label.Text = text
+        label.TextColor3 = color
+        label.TextScaled = true
+        label.Font = Enum.Font.GothamBold
+        label.TextStrokeTransparency = 0.3
+        table.insert(espInstances, billboard)
+    end
+end
+
+local function updateESP()
+    for _, obj in ipairs(espInstances) do pcall(function() obj:Destroy() end) end
+    espInstances = {}
+    if not settings.espEnabled then return end
+    for _, plr in ipairs(game.Players:GetPlayers()) do
+        if plr ~= player and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+            local roleName, roleColor = getPlayerRole(plr)
+            if (roleName == "Murderer" and not settings.showMurderer) or
+               (roleName == "Sheriff" and not settings.showSheriff) or
+               (roleName == "Невинный" and not settings.showInnocent) then continue end
+            local text = plr.Name
+            if settings.showDistance then
+                local dist = (plr.Character.HumanoidRootPart.Position - rootPart.Position).Magnitude
+                text = text .. " | " .. math.floor(dist) .. "m"
+            end
+            createESPBox(plr.Character.HumanoidRootPart, roleColor, text)
+        end
+    end
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if obj:IsA("Tool") and obj.Name:lower():find("gun") and obj.Parent ~= player.Character and obj.Parent ~= player.Backpack then
+            createESPBox(obj:FindFirstChild("Handle") or obj, Color3.fromRGB(255, 200, 0), "🔫 Пистолет")
+        end
+    end
+end
+
+-- ================================================
+-- ===== 3. SILENT AIM (Nx-Crazy) =====
+-- ================================================
+local RaycastParams = RaycastParams.new()
+RaycastParams.IgnoreWater = true
+RaycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+RaycastParams.FilterDescendantsInstances = {player.Character}
+
+local function getClosestPlayer()
+    local closest, minDist = nil, math.huge
+    for _, plr in ipairs(game.Players:GetPlayers()) do
+        if plr ~= player and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+            local dist = (plr.Character.HumanoidRootPart.Position - rootPart.Position).Magnitude
+            if dist < minDist then minDist = dist; closest = plr end
+        end
+    end
+    return closest
+end
+
+local rawMetatable = getrawmetatable(game)
+local oldNameCall = rawMetatable.__namecall
+setreadonly(rawMetatable, false)
+rawMetatable.__namecall = newcclosure(function(object, ...)
+    local method = getnamecallmethod()
+    local args = {...}
+    if settings.silentAim then
+        if method == "FireServer" and tostring(object) == "Throw" then
+            local closest = getClosestPlayer()
+            if closest and closest.Character then
+                local primary = closest.Character.HumanoidRootPart
+                local result = workspace:Raycast(rootPart.Position, (primary.Position - rootPart.Position).Unit * 200, RaycastParams)
+                if result then args[2] = result.Position end
+            end
+        elseif method == "InvokeServer" and tostring(object) == "ShootGun" and Roles.Murderer then
+            local primary = Roles.Murderer.Character.HumanoidRootPart
+            args[2] = primary.Position + primary.AssemblyLinearVelocity / 40
+        end
+    end
+    return oldNameCall(object, unpack(args))
+end)
+setreadonly(rawMetatable, true)
+
+-- ================================================
+-- ===== 4. KILL ALL (v3.2.1) =====
+-- ================================================
+local function killAll()
+    if not settings.killAll then return end
+    local murderer = Roles.Murderer
+    if not murderer or murderer == player then return end
+    local killRemote = ReplicatedStorage:FindFirstChild("Kill") or ReplicatedStorage:FindFirstChild("Hit")
+    if killRemote then
+        for _, plr in ipairs(game.Players:GetPlayers()) do
+            if plr ~= player and plr ~= murderer and plr.Character then
+                pcall(function() killRemote:FireServer(plr) end)
+                wait(0.1)
+            end
+        end
+    end
+end
+
+-- ================================================
+-- ===== 5. АВТОФАРМ (v3.2.1) =====
+-- ================================================
+local collectRemote = nil
+for _, v in ipairs(ReplicatedStorage:GetChildren()) do
+    if v:IsA("RemoteEvent") and (v.Name:lower():find("coin") or v.Name:lower():find("collect")) then
+        collectRemote = v; break
+    end
+end
+
+local function isRoundActive()
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if obj:IsA("BasePart") and obj.Name:lower():find("coin") then return true end
+    end
+    return false
+end
+
+local function farmLoop()
+    while settings.farmEnabled and wait(0.3) do
+        if not isRoundActive() or not character or not humanoid or humanoid.Health <= 0 then
+            wait(1); continue
+        end
+        if settings.collectCoins then
+            local targetCoin, minDist = nil, math.huge
+            for _, obj in ipairs(workspace:GetChildren()) do
+                if obj:IsA("BasePart") and obj.Name:lower():find("coin") then
+                    local dist = (obj.Position - rootPart.Position).Magnitude
+                    if dist < minDist then minDist = dist; targetCoin = obj end
+                end
+            end
+            if targetCoin then
+                rootPart.CFrame = CFrame.new(targetCoin.Position + Vector3.new(0, 3, 0))
+                wait(0.1)
+                if collectRemote then pcall(function() collectRemote:FireServer(targetCoin) end) end
+            end
+        end
+        if settings.collectWeapons then
+            for _, obj in ipairs(workspace:GetChildren()) do
+                if obj:IsA("Tool") and obj.Name:lower():find("gun") and obj.Parent ~= player.Character and obj.Parent ~= player.Backpack then
+                    rootPart.CFrame = CFrame.new(obj.Position + Vector3.new(0, 2, 0))
+                    wait(0.1)
+                    pcall(function() player.Character.Humanoid:EquipTool(obj) end)
+                end
+            end
+        end
+    end
+end
+
+-- ================================================
+-- ===== 6. FLY / NOCLIP (v3.2.1) =====
+-- ================================================
+local flyConnection = nil
+local function startFly()
+    if flyConnection then flyConnection:Disconnect() end
+    if not settings.fly then return end
+    flyConnection = RunService.RenderStepped:Connect(function()
+        if not character or not rootPart then return end
+        local speed = 16
+        local moveDirection = Vector3.new(0, 0, 0)
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveDirection = moveDirection + camera.CFrame.LookVector * Vector3.new(1, 0, 1) end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveDirection = moveDirection - camera.CFrame.LookVector * Vector3.new(1, 0, 1) end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveDirection = moveDirection - camera.CFrame.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveDirection = moveDirection + camera.CFrame.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then moveDirection = moveDirection + Vector3.new(0, 1, 0) end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then moveDirection = moveDirection - Vector3.new(0, 1, 0) end
+        if moveDirection.Magnitude > 0 then moveDirection = moveDirection.Unit * speed end
+        rootPart.Velocity = moveDirection
+        rootPart.CFrame = CFrame.new(rootPart.Position, rootPart.Position + camera.CFrame.LookVector * Vector3.new(1, 0, 1))
+        if settings.noclip then
+            for _, part in ipairs(character:GetDescendants()) do
+                if part:IsA("BasePart") then part.CanCollide = false end
+            end
+        end
+    end)
+end
+
+-- ================================================
+-- ===== 7. FULLBRIGHT (v3.2.1) =====
+-- ================================================
+local function toggleFullBright()
+    if settings.fullBright then
+        Lighting.Brightness = 2; Lighting.ClockTime = 14; Lighting.FogEnd = 100000
+        Lighting.GlobalShadows = false; Lighting.OutdoorAmbient = Color3.fromRGB(128, 128, 128)
+    else
+        Lighting.Brightness = 1; Lighting.ClockTime = 14; Lighting.FogEnd = 1000
+        Lighting.GlobalShadows = true; Lighting.OutdoorAmbient = Color3.fromRGB(0, 0, 0)
+    end
+end
+
+-- ================================================
+-- ===== СОЗДАНИЕ ВКЛАДОК RAYFIELD =====
+-- ================================================
+local CombatTab = Window:CreateTab("Combat", 0)
+CombatTab:CreateToggle({ Name = "Silent Aim", CurrentValue = false, Flag = "SilentAim", Callback = function(v) settings.silentAim = v end })
+CombatTab:CreateToggle({ Name = "Kill All", CurrentValue = false, Flag = "KillAll", Callback = function(v) settings.killAll = v; if v then spawn(killAll) end end })
+CombatTab:CreateToggle({ Name = "God Mode", CurrentValue = false, Flag = "GodMode", Callback = function(v) settings.godMode = v; if v and humanoid then humanoid.MaxHealth = math.huge; humanoid.Health = math.huge end end })
+CombatTab:CreateToggle({ Name = "Infinite Ammo", CurrentValue = false, Flag = "InfiniteAmmo", Callback = function(v) settings.infiniteAmmo = v end })
+
+local ESPTab = Window:CreateTab("ESP", 1)
+ESPTab:CreateToggle({ Name = "Enable ESP", CurrentValue = false, Flag = "ESP", Callback = function(v) settings.espEnabled = v; if v then updateESP(); spawn(function() while settings.espEnabled do updateESP(); wait(0.5) end end) else for _, obj in ipairs(espInstances) do pcall(function() obj:Destroy() end) end; espInstances = {} end end })
+ESPTab:CreateToggle({ Name = "Show Murderer", CurrentValue = true, Flag = "ShowMurderer", Callback = function(v) settings.showMurderer = v end })
+ESPTab:CreateToggle({ Name = "Show Sheriff", CurrentValue = true, Flag = "ShowSheriff", Callback = function(v) settings.showSheriff = v end })
+ESPTab:CreateToggle({ Name = "Show Innocents", CurrentValue = true, Flag = "ShowInnocent", Callback = function(v) settings.showInnocent = v end })
+ESPTab:CreateToggle({ Name = "Show Distance", CurrentValue = true, Flag = "ShowDistance", Callback = function(v) settings.showDistance = v end })
+
+local FarmTab = Window:CreateTab("AutoFarm", 2)
+FarmTab:CreateToggle({ Name = "Enable Auto Farm", CurrentValue = false, Flag = "Farm", Callback = function(v) settings.farmEnabled = v; if v then spawn(farmLoop) end end })
+FarmTab:CreateToggle({ Name = "Collect Coins", CurrentValue = true, Flag = "CollectCoins", Callback = function(v) settings.collectCoins = v end })
+FarmTab:CreateToggle({ Name = "Collect Weapons", CurrentValue = true, Flag = "CollectWeapons", Callback = function(v) settings.collectWeapons = v end })
+
+local MoveTab = Window:CreateTab("Movement", 3)
+MoveTab:CreateToggle({ Name = "Fly (WASD + Space/Shift)", CurrentValue = false, Flag = "Fly", Callback = function(v) settings.fly = v; startFly() end })
+MoveTab:CreateToggle({ Name = "Noclip", CurrentValue = false, Flag = "Noclip", Callback = function(v) settings.noclip = v end })
+MoveTab:CreateSlider({ Name = "Speed", Range = {10, 50}, Increment = 1, Suffix = " speed", CurrentValue = 16, Flag = "Speed", Callback = function(v) if humanoid then humanoid.WalkSpeed = v end end })
+MoveTab:CreateSlider({ Name = "Jump Power", Range = {50, 200}, Increment = 5, Suffix = " power", CurrentValue = 50, Flag = "JumpPower", Callback = function(v) if humanoid then humanoid.JumpPower = v end end })
+
+local MiscTab = Window:CreateTab("Misc", 4)
+MiscTab:CreateToggle({ Name = "FullBright", CurrentValue = false, Flag = "FullBright", Callback = function(v) settings.fullBright = v; toggleFullBright() end })
+
+-- ================================================
+-- ===== ЗАПУСК =====
+-- ================================================
+print("✅ MM2 Script v5.0 загружен (только ваши исходники)")
+Rayfield:Notify({ Title = "MM2 Script v5.0", Content = "Загружено из ваших исходников", Duration = 3 })
+
+spawn(function()
+    while wait(0.5) do
+        if settings.godMode and humanoid then humanoid.Health = math.huge end
+        if settings.infiniteAmmo and character then
+            for _, tool in ipairs(character:GetChildren()) do
+                if tool:IsA("Tool") and tool:FindFirstChild("Ammo") then tool.Ammo.Value = 999 end
+            end
+        end
+    end
+end)
